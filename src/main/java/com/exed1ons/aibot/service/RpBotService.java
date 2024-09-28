@@ -16,6 +16,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.http.HttpHeaders;
 
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.ArrayList;
@@ -129,7 +130,7 @@ public class RpBotService {
         return (String) message.get("content");
     }
 
-    private void saveAssistantMessage(String content) {
+    public void saveAssistantMessage(String content) {
         logger.info("Saving the assistant's message to the database.");
         ContextMessage contextMessage = ContextMessage.builder()
                 .text(content)
@@ -137,6 +138,7 @@ public class RpBotService {
                 .authorId("assistant")
                 .build();
         messageRepository.save(contextMessage);
+        trimMessageHistory();
         logger.info("Assistant message saved successfully.");
     }
 
@@ -154,6 +156,21 @@ public class RpBotService {
                 .authorId(userId)
                 .build();
         messageRepository.save(contextMessage);
+        trimMessageHistory();
         logger.info("User message saved successfully.");
+    }
+
+    private void trimMessageHistory() {
+        long messageCount = messageRepository.count();
+        if (messageCount > 100) {
+            logger.info("Message count exceeds 100. Deleting the oldest messages.");
+            List<ContextMessage> oldestMessages = messageRepository.findAll()
+                    .stream()
+                    .sorted(Comparator.comparing(ContextMessage::getId))
+                    .limit(messageCount - 100)
+                    .toList();
+            messageRepository.deleteAll(oldestMessages);
+            logger.info("Oldest messages deleted successfully to maintain 100 message limit.");
+        }
     }
 }
