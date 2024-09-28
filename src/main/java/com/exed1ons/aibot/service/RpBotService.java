@@ -13,6 +13,7 @@ import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.http.HttpHeaders;
 
@@ -20,6 +21,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.ArrayList;
+import java.util.concurrent.atomic.AtomicInteger;
 
 @Service
 @RequiredArgsConstructor
@@ -39,6 +41,10 @@ public class RpBotService {
     private String systemPrompt;
     @Value("${llm.model}")
     private String model;
+
+    @Value("#{'${llm.api.keys}'.split(',')}")
+    private List<String> apiKeys;
+    private final AtomicInteger apiKeyIndex = new AtomicInteger(0);
 
     public String sendMessageToLLM() {
         logger.info("Fetching all context messages from the repository.");
@@ -87,13 +93,31 @@ public class RpBotService {
     }
 
     private ResponseEntity<String> sendApiRequest(HttpEntity<String> request) {
-        try {
-            logger.info("Executing API request to LLM.");
-            return restTemplate.exchange(apiUrl, HttpMethod.POST, request, String.class);
-        } catch (Exception e) {
-            logger.error("Exception occurred during API request: {}", e.getMessage(), e);
-            throw new RuntimeException("API request failed", e);
+        int attempts = 0;
+        while (attempts < apiKeys.size()) {
+            try {
+                updateApiKey();
+                logger.info("Executing API request to LLM using API key index {}", apiKeyIndex.get());
+                return restTemplate.exchange(apiUrl, HttpMethod.POST, request, String.class);
+            } catch (HttpClientErrorException.TooManyRequests e) {
+                logger.warn("Rate limit reached for current API key, switching to next key. Retry attempt {}", attempts + 1);
+                attempts++;
+                if (attempts >= apiKeys.size()) {
+                    logger.error("All API keys exhausted. Rate limit reached.");
+                    throw new RuntimeException("Rate limit reached for all API keys", e);
+                }
+            } catch (Exception e) {
+                logger.error("Exception occurred during API request: {}", e.getMessage(), e);
+                throw new RuntimeException("API request failed", e);
+            }
         }
+        throw new RuntimeException("Failed to process request after using all available API keys");
+    }
+
+    private void updateApiKey() {
+        int currentIndex = apiKeyIndex.get();
+        apiKeyIndex.set((currentIndex + 1) % apiKeys.size());
+        apiKey = apiKeys.get(apiKeyIndex.get());
     }
 
     private String processApiResponse(ResponseEntity<String> response) {
