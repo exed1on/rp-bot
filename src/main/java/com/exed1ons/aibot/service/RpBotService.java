@@ -187,14 +187,14 @@ public class RpBotService {
     private void trimMessageHistory() {
         long messageCount = messageRepository.count();
         if (messageCount > 50) {
-            logger.info("Message count exceeds 100. Deleting the oldest messages.");
+            logger.info("Message count exceeds 50. Deleting the oldest messages.");
             List<ContextMessage> oldestMessages = messageRepository.findAll()
                     .stream()
                     .sorted(Comparator.comparing(ContextMessage::getId))
                     .limit(messageCount - 50)
                     .toList();
             messageRepository.deleteAll(oldestMessages);
-            logger.info("Oldest messages deleted successfully to maintain 100 message limit.");
+            logger.info("Oldest messages deleted successfully to maintain 50 message limit.");
         }
     }
 }
