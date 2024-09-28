@@ -167,7 +167,7 @@ public class RpBotService {
             List<ContextMessage> oldestMessages = messageRepository.findAll()
                     .stream()
                     .sorted(Comparator.comparing(ContextMessage::getId))
-                    .limit(messageCount - 100)
+                    .limit(messageCount - 50)
                     .toList();
             messageRepository.deleteAll(oldestMessages);
             logger.info("Oldest messages deleted successfully to maintain 100 message limit.");
