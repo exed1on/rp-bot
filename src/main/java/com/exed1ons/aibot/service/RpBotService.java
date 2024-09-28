@@ -89,16 +89,20 @@ public class RpBotService {
         }
     }
 
-    private ResponseEntity<String> sendApiRequest(HttpEntity<String> request) {
+    private ResponseEntity<String> sendApiRequest(HttpEntity<String> originalRequest) {
         int attempts = 0;
         while (attempts < apiKeys.size()) {
             try {
                 String currentApiKey = apiKeys.get(apiKeyIndex.get());
-                HttpHeaders headers = request.getHeaders();
-                headers.set("Authorization", "Bearer " + currentApiKey);
+
+                HttpHeaders updatedHeaders = new HttpHeaders();
+                updatedHeaders.addAll(originalRequest.getHeaders());
+                updatedHeaders.set("Authorization", "Bearer " + currentApiKey);
+
+                HttpEntity<String> updatedRequest = new HttpEntity<>(originalRequest.getBody(), updatedHeaders);
 
                 logger.info("Executing API request to LLM using API key index {}", apiKeyIndex.get());
-                return restTemplate.exchange(apiUrl, HttpMethod.POST, new HttpEntity<>(request.getBody(), headers), String.class);
+                return restTemplate.exchange(apiUrl, HttpMethod.POST, updatedRequest, String.class);
             } catch (HttpClientErrorException.TooManyRequests e) {
                 logger.warn("Rate limit reached for current API key, switching to next key. Retry attempt {}", attempts + 1);
                 apiKeyIndex.set((apiKeyIndex.get() + 1) % apiKeys.size());
