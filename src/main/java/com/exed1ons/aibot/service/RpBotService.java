@@ -186,7 +186,7 @@ public class RpBotService {
 
     private void trimMessageHistory() {
         long messageCount = messageRepository.count();
-        if (messageCount > 100) {
+        if (messageCount > 50) {
             logger.info("Message count exceeds 100. Deleting the oldest messages.");
             List<ContextMessage> oldestMessages = messageRepository.findAll()
                     .stream()
