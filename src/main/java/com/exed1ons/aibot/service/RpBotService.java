@@ -35,8 +35,6 @@ public class RpBotService {
 
     @Value("${llm.api.url}")
     private String apiUrl;
-    @Value("${llm.api.key}")
-    private String apiKey;
     @Value("${llm.system.prompt}")
     private String systemPrompt;
     @Value("${llm.model}")
@@ -70,7 +68,6 @@ public class RpBotService {
     private HttpEntity<String> createRequestEntity(List<Map<String, String>> formattedMessages) {
         logger.info("Building the JSON payload for the request.");
         HttpHeaders headers = new HttpHeaders();
-        headers.add("Authorization", "Bearer " + apiKey);
         headers.add("Content-Type", "application/json; charset=utf-8");
 
         List<Map<String, String>> messages = new ArrayList<>();
@@ -96,28 +93,22 @@ public class RpBotService {
         int attempts = 0;
         while (attempts < apiKeys.size()) {
             try {
-                updateApiKey();
+                String currentApiKey = apiKeys.get(apiKeyIndex.get());
+                HttpHeaders headers = request.getHeaders();
+                headers.set("Authorization", "Bearer " + currentApiKey);
+
                 logger.info("Executing API request to LLM using API key index {}", apiKeyIndex.get());
-                return restTemplate.exchange(apiUrl, HttpMethod.POST, request, String.class);
+                return restTemplate.exchange(apiUrl, HttpMethod.POST, new HttpEntity<>(request.getBody(), headers), String.class);
             } catch (HttpClientErrorException.TooManyRequests e) {
                 logger.warn("Rate limit reached for current API key, switching to next key. Retry attempt {}", attempts + 1);
+                apiKeyIndex.set((apiKeyIndex.get() + 1) % apiKeys.size());
                 attempts++;
-                if (attempts >= apiKeys.size()) {
-                    logger.error("All API keys exhausted. Rate limit reached.");
-                    throw new RuntimeException("Rate limit reached for all API keys", e);
-                }
             } catch (Exception e) {
                 logger.error("Exception occurred during API request: {}", e.getMessage(), e);
                 throw new RuntimeException("API request failed", e);
             }
         }
         throw new RuntimeException("Failed to process request after using all available API keys");
-    }
-
-    private void updateApiKey() {
-        int currentIndex = apiKeyIndex.get();
-        apiKeyIndex.set((currentIndex + 1) % apiKeys.size());
-        apiKey = apiKeys.get(apiKeyIndex.get());
     }
 
     private String processApiResponse(ResponseEntity<String> response) {
@@ -186,15 +177,15 @@ public class RpBotService {
 
     private void trimMessageHistory() {
         long messageCount = messageRepository.count();
-        if (messageCount > 50) {
-            logger.info("Message count exceeds 50. Deleting the oldest messages.");
+        if (messageCount > 30) {
+            logger.info("Message count exceeds 30. Deleting the oldest messages.");
             List<ContextMessage> oldestMessages = messageRepository.findAll()
                     .stream()
                     .sorted(Comparator.comparing(ContextMessage::getId))
-                    .limit(messageCount - 50)
+                    .limit(messageCount - 30)
                     .toList();
             messageRepository.deleteAll(oldestMessages);
-            logger.info("Oldest messages deleted successfully to maintain 50 message limit.");
+            logger.info("Oldest messages deleted successfully to maintain 30 message limit.");
         }
     }
 }
