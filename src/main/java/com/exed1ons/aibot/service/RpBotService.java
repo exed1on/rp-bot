@@ -1,9 +1,5 @@
 package com.exed1ons.aibot.service;
 
-import com.exed1ons.aibot.pesistence.entity.ContextMessage;
-import com.exed1ons.aibot.pesistence.entity.Role;
-import com.exed1ons.aibot.pesistence.entity.MessageType;
-import com.exed1ons.aibot.pesistence.repository.MessageRepository;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -18,10 +14,8 @@ import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.http.HttpHeaders;
 
-import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
-import java.util.ArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 
 @Service
@@ -30,7 +24,6 @@ public class RpBotService {
 
     private static final Logger logger = LoggerFactory.getLogger(RpBotService.class);
 
-    private final MessageRepository messageRepository;
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
 
@@ -94,39 +87,24 @@ public class RpBotService {
         or social chatter. Be direct, informative, and helpful when responding.
         Response should be as short as possible, focusing on the task at hand. Answers should be in English only
         Even if the message is in another language, respond in English.
-        For the sources of your info, you shuld prefer the most recent and reliable sources available in worldwide english language resources""";
+        For the sources of your info, you should prefer the most recent and reliable sources available in worldwide english language resources""";
 
-    public String sendMessageToLLM() {
-        logger.info("Starting intelligent message processing");
+    public String processMessage(String messageText) {
+        logger.info("Starting intelligent message processing for: {}", messageText);
 
-        List<ContextMessage> contextMessages = messageRepository.findAll();
-        if (contextMessages.isEmpty()) {
-            return "Hello! How can I help you today?";
-        }
-
-        ContextMessage lastMessage = contextMessages.stream()
-                .filter(msg -> msg.getRole() == Role.user)
-                .max(Comparator.comparing(ContextMessage::getId))
-                .orElse(null);
-
-        if (lastMessage == null) {
-            return processWithRegularModel(contextMessages);
-        }
-
-        MessageAnalysis analysis = analyzeMessage(lastMessage.getText());
-        updateMessageAnalysis(lastMessage, analysis);
+        MessageAnalysis analysis = analyzeMessage(messageText);
 
         if (!analysis.shouldRespond()) {
-            logger.info("Analysis determined no response needed for message: {}", lastMessage.getText());
+            logger.info("Analysis determined no response needed for message: {}", messageText);
             return null;
         }
 
         if (analysis.requiresTools()) {
             logger.info("Message requires tools, using compound model");
-            return processWithCompoundModel(contextMessages, analysis);
+            return processWithCompoundModel(messageText, analysis);
         } else {
             logger.info("Message can be handled with regular model");
-            return processWithRegularModel(contextMessages);
+            return processWithRegularModel(messageText);
         }
     }
 
@@ -181,45 +159,35 @@ public class RpBotService {
         }
     }
 
-    private String processWithRegularModel(List<ContextMessage> contextMessages) {
+    private String processWithRegularModel(String messageText) {
         logger.info("Processing with regular model");
-        List<Map<String, String>> formattedMessages = formatMessages(contextMessages);
-        String response = callLLMAPI(formattedMessages, model, 150);
-        saveAssistantMessage(response, model, false);
-        return response;
+
+        List<Map<String, String>> messages = List.of(
+                Map.of("role", "system", "content", systemPrompt),
+                Map.of("role", "user", "content", messageText)
+        );
+
+        return callLLMAPI(messages, model, 150);
     }
 
-    private String processWithCompoundModel(List<ContextMessage> contextMessages, MessageAnalysis analysis) {
+    private String processWithCompoundModel(String messageText, MessageAnalysis analysis) {
         logger.info("Processing with compound model for: {}", analysis.messageType());
 
-        List<Map<String, String>> formattedMessages = formatMessagesForCompound(contextMessages, analysis);
-
         try {
-            String response = callCompoundAPI(formattedMessages);
-            saveAssistantMessage(response, compoundModel, true);
-            return response;
+            String enhancedSystemPrompt = ROUTING_SYSTEM_PROMPT +
+                    "\n\nContext: The user's message appears to be a " + analysis.messageType().name().toLowerCase().replace("_", " ") +
+                    " that requires " + (analysis.requiresTools() ? "external tools" : "knowledge-based response") + ".";
+
+            List<Map<String, String>> messages = List.of(
+                    Map.of("role", "system", "content", enhancedSystemPrompt),
+                    Map.of("role", "user", "content", messageText)
+            );
+
+            return callCompoundAPI(messages);
         } catch (Exception e) {
             logger.error("Compound model failed, falling back to regular model", e);
-            return processWithRegularModel(contextMessages);
+            return processWithRegularModel(messageText);
         }
-    }
-
-    private List<Map<String, String>> formatMessagesForCompound(List<ContextMessage> contextMessages, MessageAnalysis analysis) {
-        List<Map<String, String>> messages = new ArrayList<>();
-
-        String enhancedSystemPrompt = ROUTING_SYSTEM_PROMPT +
-                "\n\nContext: The user's message appears to be a " + analysis.messageType().name().toLowerCase().replace("_", " ") +
-                " that requires " + (analysis.requiresTools() ? "external tools" : "knowledge-based response") + ".";
-
-        messages.add(Map.of("role", "system", "content", enhancedSystemPrompt));
-
-        contextMessages.stream()
-                .sorted(Comparator.comparing(ContextMessage::getId))
-                .forEach(msg -> messages.add(Map.of(
-                        "role", msg.getRole().toString().toLowerCase(),
-                        "content", msg.getText())));
-
-        return messages;
     }
 
     private String callCompoundAPI(List<Map<String, String>> messages) {
@@ -235,13 +203,9 @@ public class RpBotService {
     }
 
     private String callLLMAPI(List<Map<String, String>> messages, String modelName, int maxTokens) {
-        List<Map<String, String>> fullMessages = new ArrayList<>();
-        fullMessages.add(Map.of("role", "system", "content", systemPrompt));
-        fullMessages.addAll(messages);
-
         Map<String, Object> requestBody = Map.of(
                 "model", modelName,
-                "messages", fullMessages,
+                "messages", messages,
                 "max_tokens", maxTokens
         );
 
@@ -250,23 +214,12 @@ public class RpBotService {
         return processApiResponse(response);
     }
 
-    private List<Map<String, String>> formatMessages(List<ContextMessage> contextMessages) {
-        logger.info("Formatting messages for LLM API");
-        return contextMessages.stream()
-                .sorted(Comparator.comparing(ContextMessage::getId))
-                .map(msg -> Map.of(
-                        "role", msg.getRole().toString().toLowerCase(),
-                        "content", msg.getText()))
-                .toList();
-    }
-
     private HttpEntity<String> createRequestEntity(Map<String, Object> requestBody) {
-        logger.info("Building the JSON payload for the request");
+        logger.debug("Building the JSON payload for the request");
         HttpHeaders headers = new HttpHeaders();
         headers.add("Content-Type", "application/json; charset=utf-8");
 
         try {
-            logger.debug("Serialized request body: {}", objectMapper.writeValueAsString(requestBody));
             return new HttpEntity<>(objectMapper.writeValueAsString(requestBody), headers);
         } catch (JsonProcessingException e) {
             logger.error("Failed to serialize request body", e);
@@ -286,7 +239,7 @@ public class RpBotService {
 
                 HttpEntity<String> updatedRequest = new HttpEntity<>(originalRequest.getBody(), updatedHeaders);
 
-                logger.info("Executing API request using API key index {}", apiKeyIndex.get());
+                logger.debug("Executing API request using API key index {}", apiKeyIndex.get());
                 return restTemplate.exchange(apiUrl, HttpMethod.POST, updatedRequest, String.class);
             } catch (HttpClientErrorException.TooManyRequests e) {
                 logger.warn("Rate limit reached, switching to next API key. Attempt {}", attempts + 1);
@@ -301,7 +254,6 @@ public class RpBotService {
     }
 
     private String processApiResponse(ResponseEntity<String> response) {
-        logger.info("Processing API response");
         try {
             Map<String, Object> responseBody = objectMapper.readValue(response.getBody(), Map.class);
             return extractMessageFromResponse(responseBody);
@@ -312,7 +264,6 @@ public class RpBotService {
     }
 
     private String extractMessageFromResponse(Map<String, Object> responseBody) {
-        logger.debug("Extracting message content from response");
         List<Map<String, Object>> choices = (List<Map<String, Object>>) responseBody.get("choices");
 
         if (choices == null || choices.isEmpty()) {
@@ -329,62 +280,6 @@ public class RpBotService {
         }
 
         return (String) message.get("content");
-    }
-
-    private void updateMessageAnalysis(ContextMessage message, MessageAnalysis analysis) {
-        message.setMessageType(analysis.messageType());
-        message.setRequiresTools(analysis.requiresTools());
-        messageRepository.save(message);
-        logger.info("Updated message analysis for message ID: {}", message.getId());
-    }
-
-    public void saveAssistantMessage(String content, String modelUsed, boolean usedTools) {
-        logger.info("Saving assistant message with model: {}", modelUsed);
-        ContextMessage contextMessage = ContextMessage.builder()
-                .text(content)
-                .role(Role.assistant)
-                .authorId("assistant")
-                .messageType(MessageType.SYSTEM)
-                .requiresTools(usedTools)
-                .modelUsed(modelUsed)
-                .build();
-        messageRepository.save(contextMessage);
-        trimMessageHistory();
-        logger.info("Assistant message saved successfully");
-    }
-
-    public void saveUserMessage(String content, String userId) {
-        logger.info("Saving user message for user ID: {}", userId);
-
-        if (content.equals(systemPrompt)) {
-            logger.warn("Skipping system prompt message");
-            return;
-        }
-
-        ContextMessage contextMessage = ContextMessage.builder()
-                .text(content)
-                .role(Role.user)
-                .authorId(userId)
-                .messageType(MessageType.CASUAL_CHAT)
-                .requiresTools(false)
-                .build();
-        messageRepository.save(contextMessage);
-        trimMessageHistory();
-        logger.info("User message saved successfully");
-    }
-
-    private void trimMessageHistory() {
-        long messageCount = messageRepository.count();
-        if (messageCount > 30) {
-            logger.info("Trimming message history, current count: {}", messageCount);
-            List<ContextMessage> oldestMessages = messageRepository.findAll()
-                    .stream()
-                    .sorted(Comparator.comparing(ContextMessage::getId))
-                    .limit(messageCount - 30)
-                    .toList();
-            messageRepository.deleteAll(oldestMessages);
-            logger.info("Message history trimmed successfully");
-        }
     }
 
     private record MessageAnalysis(MessageType messageType, boolean requiresTools, boolean shouldRespond, String reason) {}

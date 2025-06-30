@@ -1,6 +1,5 @@
 package com.exed1ons.aibot.bot;
 
-import com.exed1ons.aibot.pesistence.repository.MessageRepository;
 import com.exed1ons.aibot.service.RpBotService;
 import lombok.Getter;
 import lombok.Setter;
@@ -15,6 +14,7 @@ import org.telegram.telegrambots.meta.api.objects.*;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicLong;
 
 @Setter
 @Getter
@@ -22,23 +22,20 @@ import java.util.concurrent.CompletableFuture;
 public class RpChatBot extends TelegramLongPollingBot {
 
     private final RpBotService rpBotService;
-    private final MessageRepository messageRepository;
-
     private String botName;
     private String botToken;
+    private final AtomicLong processedMessages = new AtomicLong(0);
 
     private static final Logger logger = LoggerFactory.getLogger(RpChatBot.class);
 
     public RpChatBot(@Value("${bot.username}") String botName,
                      @Value("${bot.token}") String botToken,
-                     RpBotService rpBotService,
-                     MessageRepository messageRepository) {
+                     RpBotService rpBotService) {
 
         super(botToken);
         this.botName = botName;
         this.botToken = botToken;
         this.rpBotService = rpBotService;
-        this.messageRepository = messageRepository;
     }
 
     @Override
@@ -60,7 +57,7 @@ public class RpChatBot extends TelegramLongPollingBot {
                     return;
                 }
 
-                rpBotService.saveUserMessage(messageText, message.getFrom().getId().toString());
+                processedMessages.incrementAndGet();
                 processMessageAsync(message, chatId);
             }
         }
@@ -87,8 +84,7 @@ public class RpChatBot extends TelegramLongPollingBot {
                     I only respond when I can provide useful assistance.""";
                 break;
             case "/stats":
-                long totalMessages = messageRepository.count();
-                response = String.format("📊 Total messages processed: %d", totalMessages);
+                response = String.format("📊 Total messages processed: %d", processedMessages.get());
                 break;
             default:
                 response = "Available commands: /start, /help, /stats";
@@ -101,7 +97,7 @@ public class RpChatBot extends TelegramLongPollingBot {
         CompletableFuture.runAsync(() -> {
             try {
                 sendTypingAction(chatId);
-                String llmResponse = rpBotService.sendMessageToLLM();
+                String llmResponse = rpBotService.processMessage(message.getText());
 
                 if (llmResponse != null) {
                     sendMessageAsReply(message.getMessageId(), chatId, llmResponse);

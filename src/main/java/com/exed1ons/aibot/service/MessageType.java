@@ -1,4 +1,4 @@
-package com.exed1ons.aibot.pesistence.entity;
+package com.exed1ons.aibot.service;
 
 public enum MessageType {
     CASUAL_CHAT,
