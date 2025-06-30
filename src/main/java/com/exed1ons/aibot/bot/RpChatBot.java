@@ -9,14 +9,12 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.telegram.telegrambots.bots.TelegramLongPollingBot;
+import org.telegram.telegrambots.meta.api.methods.ActionType;
 import org.telegram.telegrambots.meta.api.methods.send.*;
 import org.telegram.telegrambots.meta.api.objects.*;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Random;
-
+import java.util.concurrent.CompletableFuture;
 
 @Setter
 @Getter
@@ -28,9 +26,6 @@ public class RpChatBot extends TelegramLongPollingBot {
 
     private String botName;
     private String botToken;
-
-    private final Map<String, Integer> messageCountMap = new HashMap<>();
-    private final Random random = new Random();
 
     private static final Logger logger = LoggerFactory.getLogger(RpChatBot.class);
 
@@ -57,35 +52,77 @@ public class RpChatBot extends TelegramLongPollingBot {
             Message message = update.getMessage();
             String chatId = message.getChatId().toString();
 
-            rpBotService.saveUserMessage(message.getText(), message.getFrom().getId().toString());
+            if (message.hasText()) {
+                String messageText = message.getText();
 
-            if (message.isReply() && isReplyToBot(message)) {
-                handleUserReply(message, chatId);
+                if (messageText.startsWith("/")) {
+                    handleCommand(message, chatId);
+                    return;
+                }
+
+                rpBotService.saveUserMessage(messageText, message.getFrom().getId().toString());
+                processMessageAsync(message, chatId);
             }
-
-            trackAndTriggerOnMessageCount(message, chatId);
         }
     }
 
-    private boolean isReplyToBot(Message message) {
-        return message.getReplyToMessage() != null &&
-                message.getReplyToMessage().getFrom().getUserName().equals(getBotUsername());
+    private void handleCommand(Message message, String chatId) {
+        String command = message.getText().toLowerCase();
+        String response;
+
+        switch (command) {
+            case "/start":
+                response = "AI Assistant ready. Send questions, requests for information, or tasks that need assistance. " +
+                        "I respond only when I can provide genuine value.";
+                break;
+            case "/help":
+                response = """
+                    I can help with:
+                    🔍 Answering specific questions
+                    📊 Calculations and data analysis  
+                    💻 Code debugging and technical help
+                    🌐 Research and current information
+                    📈 Creating charts and visualizations
+                    
+                    I only respond when I can provide useful assistance.""";
+                break;
+            case "/stats":
+                long totalMessages = messageRepository.count();
+                response = String.format("📊 Total messages processed: %d", totalMessages);
+                break;
+            default:
+                response = "Available commands: /start, /help, /stats";
+        }
+
+        sendMessage(chatId, response);
     }
 
-    private void handleUserReply(Message message, String chatId) {
-        String llmResponse = rpBotService.sendMessageToLLM();
-        sendMessageAsReply(message.getMessageId(), chatId, llmResponse);
+    private void processMessageAsync(Message message, String chatId) {
+        CompletableFuture.runAsync(() -> {
+            try {
+                sendTypingAction(chatId);
+                String llmResponse = rpBotService.sendMessageToLLM();
+
+                if (llmResponse != null) {
+                    sendMessageAsReply(message.getMessageId(), chatId, llmResponse);
+                } else {
+                    logger.info("LLM analysis determined no response needed for message in chat: {}", chatId);
+                }
+            } catch (Exception e) {
+                logger.error("Error processing message asynchronously", e);
+                sendMessage(chatId, "Sorry, I encountered an error processing your message. Please try again.");
+            }
+        });
     }
 
-    private void trackAndTriggerOnMessageCount(Message message, String chatId) {
-        int currentCount = messageCountMap.getOrDefault(chatId, 0) + 1;
-        messageCountMap.put(chatId, currentCount);
-
-        int triggerLimit = random.nextInt(5) + 3;
-        if (currentCount >= triggerLimit) {
-            messageCountMap.put(chatId, 0);
-            String llmResponse = rpBotService.sendMessageToLLM();
-            sendMessageAsReply(message.getMessageId(), chatId, llmResponse);
+    private void sendTypingAction(String chatId) {
+        try {
+            SendChatAction chatAction = new SendChatAction();
+            chatAction.setChatId(chatId);
+            chatAction.setAction(ActionType.TYPING);
+            execute(chatAction);
+        } catch (TelegramApiException e) {
+            logger.warn("Failed to send typing action", e);
         }
     }
 
@@ -94,11 +131,19 @@ public class RpChatBot extends TelegramLongPollingBot {
         message.setReplyToMessageId(messageId);
         message.setChatId(chatId);
         message.setText(text);
+        message.setParseMode("Markdown");
 
         try {
             execute(message);
+            logger.info("Reply sent successfully to chat: {}", chatId);
         } catch (TelegramApiException e) {
-            logger.error("Error while sending message", e);
+            logger.error("Error sending reply message", e);
+            try {
+                message.setParseMode(null);
+                execute(message);
+            } catch (TelegramApiException fallbackError) {
+                logger.error("Fallback message send also failed", fallbackError);
+            }
         }
     }
 
@@ -106,11 +151,19 @@ public class RpChatBot extends TelegramLongPollingBot {
         SendMessage message = new SendMessage();
         message.setChatId(chatId);
         message.setText(text);
+        message.setParseMode("Markdown");
 
         try {
             execute(message);
+            logger.info("Message sent successfully to chat: {}", chatId);
         } catch (TelegramApiException e) {
-            logger.error("Error while sending message", e);
+            logger.error("Error sending message", e);
+            try {
+                message.setParseMode(null);
+                execute(message);
+            } catch (TelegramApiException fallbackError) {
+                logger.error("Fallback message send also failed", fallbackError);
+            }
         }
     }
 }
