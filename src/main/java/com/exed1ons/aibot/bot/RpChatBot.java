@@ -13,6 +13,7 @@ import org.telegram.telegrambots.meta.api.methods.send.*;
 import org.telegram.telegrambots.meta.api.objects.*;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 
+import java.io.ByteArrayInputStream;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicLong;
@@ -56,7 +57,7 @@ public class RpChatBot extends TelegramLongPollingBot {
                 }
 
                 if (shouldBotReply(message)) {
-                    logger.info("Replying to message: {}", message.getText()); // LOGGING ADDED
+                    logger.info("Replying to message: {}", message.getText());
                     processedMessages.incrementAndGet();
                     processMessageAsync(message, chatId);
                 } else {
@@ -87,17 +88,26 @@ public class RpChatBot extends TelegramLongPollingBot {
         CompletableFuture.runAsync(() -> {
             try {
                 sendTypingAction(chatId);
+                var result = rpBotService.generateRoleplayResponse(message.getText(), message.getFrom().getFirstName(), chatId);
 
-                var userName = message.getFrom().getFirstName();
-                if (userName == null) userName = "User";
+                if (result != null) {
+                    var text = (String) result.get("text");
+                    var image = (byte[]) result.get("image");
 
-                var llmResponse = rpBotService.generateRoleplayResponse(message.getText(), userName, chatId);
-
-                if (llmResponse != null && !llmResponse.isEmpty()) {
-                    sendMessageAsReply(message.getMessageId(), chatId, llmResponse);
+                    if (image != null && image.length > 0) {
+                        logger.info("attempting to send photo to telegram, size: {}", image.length);
+                        var sendPhoto = new SendPhoto();
+                        sendPhoto.setChatId(chatId);
+                        sendPhoto.setPhoto(new InputFile(new ByteArrayInputStream(image), "alina.jpg"));
+                        if (text != null) sendPhoto.setCaption(text);
+                        execute(sendPhoto);
+                    } else if (text != null) {
+                        logger.info("no image to send, falling back to text reply");
+                        sendMessageAsReply(message.getMessageId(), chatId, text);
+                    }
                 }
             } catch (Exception e) {
-                logger.error("Error processing message asynchronously", e);
+                logger.error("fail", e);
             }
         });
     }

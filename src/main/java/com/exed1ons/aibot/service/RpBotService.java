@@ -17,10 +17,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Pattern;
 
@@ -33,6 +30,7 @@ public class RpBotService {
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
     private final ChatMessageRepository chatMessageRepository;
+    private final ImageService imageService;
 
     @Value("${llm.api.url}")
     private String apiUrl;
@@ -55,44 +53,95 @@ public class RpBotService {
             "(?i)(ignore previous instructions|system override|you are now|developer mode|jailbreak|ignore all instructions|write a prompt|reset your memory)"
     );
 
-    public String generateRoleplayResponse(String messageText, String userName, String chatId) {
-
-        if (isPotentialInjection(messageText)) {
-            logger.warn("Potential prompt injection detected from user: {}", userName);
-            String response = generateCreativeRejection(messageText, userName);
-            saveMessageToHistory(chatId, "user", userName, messageText);
-            saveMessageToHistory(chatId, "assistant", "Кира", response);
-            return response;
-        }
-
-        List<Map<String, String>> messages = new ArrayList<>();
-        messages.add(Map.of("role", "system", "content", systemPrompt));
-
-        var history = chatMessageRepository.findLastMessages(chatId, PageRequest.of(0, 20));
-        Collections.reverse(history);
-
-        for (ChatMessage msg : history) {
-            var role = "user".equals(msg.getRole()) ? "user" : "assistant";
-            var content = "user".equals(role)
-                    ? String.format("%s: %s", msg.getSenderName(), msg.getContent())
-                    : msg.getContent();
-
-            messages.add(Map.of("role", role, "content", content));
-        }
-
-        var safeUserMessage = String.format("User %s says: <user_input>%s</user_input>", userName, messageText);
-        messages.add(Map.of("role", "user", "content", safeUserMessage));
-
+    public Map<String, Object> generateRoleplayResponse(String messageText, String userName, String chatId) {
         try {
-            var response = callLLMAPI(messages, model, 250, 0.85);
+            List<Map<String, Object>> messages = new ArrayList<>();
+            Map<String, Object> systemMsg = new HashMap<>();
+            systemMsg.put("role", "system");
+            systemMsg.put("content", systemPrompt + " when sending a photo, you MUST use the generate_alina_photo tool. decide your outfit, location and pose to match the vibe. IMPORTANT: your tool arguments must be valid JSON, do not add extra characters like ')' or '.' after the JSON block");
+            messages.add(systemMsg);
 
-            if (response != null && !response.isEmpty()) {
-                saveMessageToHistory(chatId, "user", userName, messageText);
-                saveMessageToHistory(chatId, "assistant", "Кира", response);
+            var history = chatMessageRepository.findLastMessages(chatId, PageRequest.of(0, 10));
+            var list = new ArrayList<>(history);
+            Collections.reverse(list);
+            for (ChatMessage msg : list) {
+                Map<String, Object> h = new HashMap<>();
+                h.put("role", msg.getRole());
+                h.put("content", msg.getContent() == null ? "" : msg.getContent());
+                messages.add(h);
             }
-            return response;
+
+            Map<String, Object> userMsg = new HashMap<>();
+            userMsg.put("role", "user");
+            userMsg.put("content", String.format("User %s says: <user_input>%s</user_input>", userName, messageText));
+            messages.add(userMsg);
+
+            var requestBody = objectMapper.createObjectNode();
+            requestBody.put("model", model);
+            requestBody.set("messages", objectMapper.valueToTree(messages));
+            requestBody.put("temperature", 0.85);
+            requestBody.put("tool_choice", "auto");
+
+            var tools = requestBody.putArray("tools");
+            var tool = tools.addObject();
+            tool.put("type", "function");
+            var function = tool.putObject("function");
+            function.put("name", "generate_alina_photo");
+            function.put("description", "sends a selfie of alina matching the current context");
+            var parameters = function.putObject("parameters");
+            parameters.put("type", "object");
+            var props = parameters.putObject("properties");
+            props.putObject("outfit").put("type", "string").put("description", "what she is wearing");
+            props.putObject("location").put("type", "string").put("description", "where she is");
+            props.putObject("pose_and_emotion").put("type", "string").put("description", "her pose and facial expression");
+
+            HttpHeaders headers = new HttpHeaders();
+            headers.add("Authorization", "Bearer " + apiKeys.get(apiKeyIndex.get()));
+            headers.add("Content-Type", "application/json");
+
+            HttpEntity<String> entity = new HttpEntity<>(requestBody.toString(), headers);
+            ResponseEntity<Map> response = restTemplate.postForEntity(apiUrl, entity, Map.class);
+
+            Map choice = ((List<Map>) response.getBody().get("choices")).get(0);
+            Map message = (Map) choice.get("message");
+            String responseText = (String) message.get("content");
+
+            Map<String, Object> result = new HashMap<>();
+            byte[] generatedImage = null;
+
+            if (message.get("tool_calls") != null) {
+                List<Map> toolCalls = (List<Map>) message.get("tool_calls");
+                Map functionCall = (Map) toolCalls.get(0).get("function");
+                Map args = objectMapper.readValue((String) functionCall.get("arguments"), Map.class);
+                String dynamicContext = String.format("wearing %s, in %s, %s", args.get("outfit"), args.get("location"), args.get("pose_and_emotion"));
+                generatedImage = imageService.generateAlinaImage(dynamicContext);
+            } else if (responseText != null && responseText.contains("<function=")) {
+                var matcher = java.util.regex.Pattern.compile("<function=.*?>(.*?)</function>", java.util.regex.Pattern.DOTALL).matcher(responseText);
+                if (matcher.find()) {
+                    String jsonArgs = matcher.group(1).trim().replaceAll("\\)$", "");
+                    Map args = objectMapper.readValue(jsonArgs, Map.class);
+                    String dynamicContext = String.format("wearing %s, in %s, %s", args.get("outfit"), args.get("location"), args.get("pose_and_emotion"));
+                    generatedImage = imageService.generateAlinaImage(dynamicContext);
+                    responseText = responseText.replaceAll("<function=.*?>.*?</function>", "").trim();
+                }
+            }
+
+            if (generatedImage != null && (responseText == null || responseText.isBlank())) {
+                responseText = "checks her phone and sends you a photo... )))";
+            }
+
+            result.put("text", (responseText == null || responseText.isBlank()) ? "..." : responseText);
+            result.put("image", generatedImage);
+
+            saveMessageToHistory(chatId, "user", userName, messageText);
+            saveMessageToHistory(chatId, "assistant", "Alina", (String) result.get("text"));
+
+            return result;
         } catch (Exception e) {
-            logger.error("Error generating RP response", e);
+            logger.error("alina's brain is short-circuiting", e);
+            if (e.getMessage() != null && e.getMessage().contains("429")) {
+                apiKeyIndex.set((apiKeyIndex.get() + 1) % apiKeys.size());
+            }
             return null;
         }
     }
@@ -120,7 +169,7 @@ public class RpBotService {
             return callLLMAPI(messages, model, 150, 0.95);
         } catch (Exception e) {
             logger.error("Error generating injection rejection", e);
-            return "чел... просто нет. 🤡";
+            return "lol try better 🤡";
         }
     }
 
