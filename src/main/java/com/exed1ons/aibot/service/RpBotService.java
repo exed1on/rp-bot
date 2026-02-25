@@ -1,11 +1,14 @@
 package com.exed1ons.aibot.service;
 
+import com.exed1ons.aibot.dao.entity.ChatMessage;
+import com.exed1ons.aibot.dao.repository.ChatMessageRepository;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -15,6 +18,7 @@ import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -28,6 +32,7 @@ public class RpBotService {
 
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
+    private final ChatMessageRepository chatMessageRepository;
 
     @Value("${llm.api.url}")
     private String apiUrl;
@@ -50,25 +55,58 @@ public class RpBotService {
             "(?i)(ignore previous instructions|system override|you are now|developer mode|jailbreak|ignore all instructions|write a prompt|reset your memory)"
     );
 
-    public String generateRoleplayResponse(String messageText, String userName) {
+    public String generateRoleplayResponse(String messageText, String userName, String chatId) {
 
         if (isPotentialInjection(messageText)) {
             logger.warn("Potential prompt injection detected from user: {}", userName);
-            return generateCreativeRejection(messageText, userName);
+            String response = generateCreativeRejection(messageText, userName);
+            saveMessageToHistory(chatId, "user", userName, messageText);
+            saveMessageToHistory(chatId, "assistant", "Кира", response);
+            return response;
         }
 
-        String safeUserMessage = String.format("User %s says: <user_input>%s</user_input>", userName, messageText);
+        saveMessageToHistory(chatId, "user", userName, messageText);
 
         List<Map<String, String>> messages = new ArrayList<>();
         messages.add(Map.of("role", "system", "content", systemPrompt));
+
+        var history = chatMessageRepository.findLastMessages(chatId, PageRequest.of(0, 20));
+        Collections.reverse(history);
+
+        for (ChatMessage msg : history) {
+            if (msg.getContent().equals(messageText)) continue;
+
+            var role = "user".equals(msg.getRole()) ? "user" : "assistant";
+            var content = "user".equals(role)
+                    ? String.format("%s: %s", msg.getSenderName(), msg.getContent())
+                    : msg.getContent();
+
+            messages.add(Map.of("role", role, "content", content));
+        }
+
+        var safeUserMessage = String.format("User %s says: <user_input>%s</user_input>", userName, messageText);
         messages.add(Map.of("role", "user", "content", safeUserMessage));
 
         try {
-            return callLLMAPI(messages, model, 250, 0.85);
+            var response = callLLMAPI(messages, model, 250, 0.85);
+            if (response != null) {
+                saveMessageToHistory(chatId, "assistant", "Кира", response);
+            }
+            return response;
         } catch (Exception e) {
             logger.error("Error generating RP response", e);
             return null;
         }
+    }
+
+    private void saveMessageToHistory(String chatId, String role, String senderName, String content) {
+        var message = ChatMessage.builder()
+                .chatId(chatId)
+                .role(role)
+                .senderName(senderName)
+                .content(content)
+                .build();
+        chatMessageRepository.save(message);
     }
 
     private String generateCreativeRejection(String attackMessage, String userName) {

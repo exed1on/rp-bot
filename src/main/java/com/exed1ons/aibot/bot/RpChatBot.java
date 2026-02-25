@@ -46,8 +46,8 @@ public class RpChatBot extends TelegramLongPollingBot {
     @Override
     public void onUpdateReceived(Update update) {
         if (update.hasMessage()) {
-            Message message = update.getMessage();
-            String chatId = message.getChatId().toString();
+            var message = update.getMessage();
+            var chatId = message.getChatId().toString();
 
             if (message.hasText()) {
                 if (message.getText().startsWith("/")) {
@@ -81,10 +81,10 @@ public class RpChatBot extends TelegramLongPollingBot {
             try {
                 sendTypingAction(chatId);
 
-                String userName = message.getFrom().getFirstName();
+                var userName = message.getFrom().getFirstName();
                 if (userName == null) userName = "User";
 
-                String llmResponse = rpBotService.generateRoleplayResponse(message.getText(), userName);
+                var llmResponse = rpBotService.generateRoleplayResponse(message.getText(), userName, chatId);
 
                 if (llmResponse != null && !llmResponse.isEmpty()) {
                     sendMessageAsReply(message.getMessageId(), chatId, llmResponse);
@@ -103,7 +103,7 @@ public class RpChatBot extends TelegramLongPollingBot {
 
     private void sendTypingAction(String chatId) {
         try {
-            SendChatAction chatAction = new SendChatAction();
+            var chatAction = new SendChatAction();
             chatAction.setChatId(chatId);
             chatAction.setAction(ActionType.TYPING);
             execute(chatAction);
@@ -113,7 +113,7 @@ public class RpChatBot extends TelegramLongPollingBot {
     }
 
     public void sendMessageAsReply(Integer messageId, String chatId, String text) {
-        SendMessage message = new SendMessage();
+        var message = new SendMessage();
         message.setReplyToMessageId(messageId);
         message.setChatId(chatId);
         message.setText(text);
@@ -127,7 +127,7 @@ public class RpChatBot extends TelegramLongPollingBot {
     }
 
     public void sendMessage(String chatId, String text) {
-        SendMessage message = new SendMessage();
+        var message = new SendMessage();
         message.setChatId(chatId);
         message.setText(text);
         try {
