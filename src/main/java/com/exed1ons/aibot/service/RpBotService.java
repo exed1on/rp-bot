@@ -97,7 +97,7 @@ public class RpBotService {
                 tool.put("type", "function");
                 var function = tool.putObject("function");
                 function.put("name", "generate_alina_photo");
-                function.put("description", "sends a selfie of alina matching the current context");
+                function.put("description", "sends a selfie ONLY when the user explicitly asks to see alina or requests a photo");
                 var parameters = function.putObject("parameters");
                 parameters.put("type", "object");
                 var props = parameters.putObject("properties");
