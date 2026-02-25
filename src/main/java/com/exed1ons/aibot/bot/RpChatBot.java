@@ -14,6 +14,7 @@ import org.telegram.telegrambots.meta.api.objects.*;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicLong;
 
 @Setter
@@ -31,7 +32,6 @@ public class RpChatBot extends TelegramLongPollingBot {
     public RpChatBot(@Value("${bot.username}") String botName,
                      @Value("${bot.token}") String botToken,
                      RpBotService rpBotService) {
-
         super(botToken);
         this.botName = botName;
         this.botToken = botToken;
@@ -50,65 +50,55 @@ public class RpChatBot extends TelegramLongPollingBot {
             String chatId = message.getChatId().toString();
 
             if (message.hasText()) {
-                String messageText = message.getText();
-
-                if (messageText.startsWith("/")) {
+                if (message.getText().startsWith("/")) {
                     handleCommand(message, chatId);
                     return;
                 }
 
-                processedMessages.incrementAndGet();
-                processMessageAsync(message, chatId);
+                if (shouldBotReply(message)) {
+                    processedMessages.incrementAndGet();
+                    processMessageAsync(message, chatId);
+                }
             }
         }
     }
 
-    private void handleCommand(Message message, String chatId) {
-        String command = message.getText().toLowerCase();
-        String response;
-
-        switch (command) {
-            case "/start":
-                response = "AI Assistant ready. Send questions, requests for information, or tasks that need assistance. " +
-                        "I respond only when I can provide genuine value.";
-                break;
-            case "/help":
-                response = """
-                    I can help with:
-                    🔍 Answering specific questions
-                    📊 Calculations and data analysis  
-                    💻 Code debugging and technical help
-                    🌐 Research and current information
-                    📈 Creating charts and visualizations
-                    
-                    I only respond when I can provide useful assistance.""";
-                break;
-            case "/stats":
-                response = String.format("📊 Total messages processed: %d", processedMessages.get());
-                break;
-            default:
-                response = "Available commands: /start, /help, /stats";
+    private boolean shouldBotReply(Message message) {
+        if (message.getReplyToMessage() != null &&
+                message.getReplyToMessage().getFrom().getUserName().equalsIgnoreCase(botName)) {
+            return true;
         }
 
-        sendMessage(chatId, response);
+        if (message.getText().toLowerCase().contains("@" + botName.toLowerCase())) {
+            return true;
+        }
+
+        return ThreadLocalRandom.current().nextInt(10) == 0;
     }
 
     private void processMessageAsync(Message message, String chatId) {
         CompletableFuture.runAsync(() -> {
             try {
                 sendTypingAction(chatId);
-                String llmResponse = rpBotService.processMessage(message.getText());
 
-                if (llmResponse != null) {
+                String userName = message.getFrom().getFirstName();
+                if (userName == null) userName = "User";
+
+                String llmResponse = rpBotService.generateRoleplayResponse(message.getText(), userName);
+
+                if (llmResponse != null && !llmResponse.isEmpty()) {
                     sendMessageAsReply(message.getMessageId(), chatId, llmResponse);
-                } else {
-                    logger.info("LLM analysis determined no response needed for message in chat: {}", chatId);
                 }
             } catch (Exception e) {
                 logger.error("Error processing message asynchronously", e);
-                sendMessage(chatId, "Sorry, I encountered an error processing your message. Please try again.");
             }
         });
+    }
+
+    private void handleCommand(Message message, String chatId) {
+        if (message.getText().equalsIgnoreCase("/stats")) {
+            sendMessage(chatId, "сообщений обработано: " + processedMessages.get() + ". я устала.");
+        }
     }
 
     private void sendTypingAction(String chatId) {
@@ -127,19 +117,12 @@ public class RpChatBot extends TelegramLongPollingBot {
         message.setReplyToMessageId(messageId);
         message.setChatId(chatId);
         message.setText(text);
-        message.setParseMode("Markdown");
+        message.setParseMode(null);
 
         try {
             execute(message);
-            logger.info("Reply sent successfully to chat: {}", chatId);
         } catch (TelegramApiException e) {
             logger.error("Error sending reply message", e);
-            try {
-                message.setParseMode(null);
-                execute(message);
-            } catch (TelegramApiException fallbackError) {
-                logger.error("Fallback message send also failed", fallbackError);
-            }
         }
     }
 
@@ -147,19 +130,10 @@ public class RpChatBot extends TelegramLongPollingBot {
         SendMessage message = new SendMessage();
         message.setChatId(chatId);
         message.setText(text);
-        message.setParseMode("Markdown");
-
         try {
             execute(message);
-            logger.info("Message sent successfully to chat: {}", chatId);
         } catch (TelegramApiException e) {
             logger.error("Error sending message", e);
-            try {
-                message.setParseMode(null);
-                execute(message);
-            } catch (TelegramApiException fallbackError) {
-                logger.error("Fallback message send also failed", fallbackError);
-            }
         }
     }
 }
