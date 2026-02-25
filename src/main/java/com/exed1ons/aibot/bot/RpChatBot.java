@@ -56,14 +56,21 @@ public class RpChatBot extends TelegramLongPollingBot {
                 }
 
                 if (shouldBotReply(message)) {
+                    logger.info("Replying to message: {}", message.getText()); // LOGGING ADDED
                     processedMessages.incrementAndGet();
                     processMessageAsync(message, chatId);
+                } else {
+                    logger.debug("Ignoring message (Random chance or no tag): {}", message.getText());
                 }
             }
         }
     }
 
     private boolean shouldBotReply(Message message) {
+        if (message.getChat().isUserChat()) {
+            return true;
+        }
+
         if (message.getReplyToMessage() != null &&
                 message.getReplyToMessage().getFrom().getUserName().equalsIgnoreCase(botName)) {
             return true;

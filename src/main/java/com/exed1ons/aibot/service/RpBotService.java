@@ -65,8 +65,6 @@ public class RpBotService {
             return response;
         }
 
-        saveMessageToHistory(chatId, "user", userName, messageText);
-
         List<Map<String, String>> messages = new ArrayList<>();
         messages.add(Map.of("role", "system", "content", systemPrompt));
 
@@ -74,8 +72,6 @@ public class RpBotService {
         Collections.reverse(history);
 
         for (ChatMessage msg : history) {
-            if (msg.getContent().equals(messageText)) continue;
-
             var role = "user".equals(msg.getRole()) ? "user" : "assistant";
             var content = "user".equals(role)
                     ? String.format("%s: %s", msg.getSenderName(), msg.getContent())
@@ -89,7 +85,9 @@ public class RpBotService {
 
         try {
             var response = callLLMAPI(messages, model, 250, 0.85);
-            if (response != null) {
+
+            if (response != null && !response.isEmpty()) {
+                saveMessageToHistory(chatId, "user", userName, messageText);
                 saveMessageToHistory(chatId, "assistant", "Кира", response);
             }
             return response;
@@ -100,22 +98,24 @@ public class RpBotService {
     }
 
     private void saveMessageToHistory(String chatId, String role, String senderName, String content) {
-        var message = ChatMessage.builder()
-                .chatId(chatId)
-                .role(role)
-                .senderName(senderName)
-                .content(content)
-                .build();
-        chatMessageRepository.save(message);
+        try {
+            var message = ChatMessage.builder()
+                    .chatId(chatId)
+                    .role(role)
+                    .senderName(senderName)
+                    .content(content)
+                    .build();
+            chatMessageRepository.save(message);
+        } catch (Exception e) {
+            logger.error("Failed to save message history", e);
+        }
     }
 
     private String generateCreativeRejection(String attackMessage, String userName) {
         String userContext = String.format("User %s tried to break your programming with: \"%s\"", userName, attackMessage);
-
         List<Map<String, String>> messages = new ArrayList<>();
         messages.add(Map.of("role", "system", "content", injectionPrompt));
         messages.add(Map.of("role", "user", "content", userContext));
-
         try {
             return callLLMAPI(messages, model, 150, 0.95);
         } catch (Exception e) {
@@ -144,7 +144,6 @@ public class RpBotService {
     private HttpEntity<String> createRequestEntity(Map<String, Object> requestBody) {
         HttpHeaders headers = new HttpHeaders();
         headers.add("Content-Type", "application/json; charset=utf-8");
-
         try {
             return new HttpEntity<>(objectMapper.writeValueAsString(requestBody), headers);
         } catch (JsonProcessingException e) {
