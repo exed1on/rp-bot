@@ -31,7 +31,7 @@ public class ImageService {
             String fullPrompt = appearancePrompt + ", " + promptContext;
 
             URI uri = UriComponentsBuilder.fromHttpUrl("https://gen.pollinations.ai/image/{prompt}")
-                    .queryParam("model", "flux")
+                    .queryParam("model", "zimage")
                     .queryParam("width", 1024)
                     .queryParam("height", 1024)
                     .queryParam("nologo", "true")
