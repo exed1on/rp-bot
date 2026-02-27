@@ -5,13 +5,13 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
-import org.springframework.http.MediaType;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.web.util.UriComponentsBuilder;
 
-import java.util.Collections;
-import java.util.Map;
+import java.net.URI;
 
 @Service
 @RequiredArgsConstructor
@@ -20,36 +20,47 @@ public class ImageService {
 
     private final RestTemplate restTemplate;
 
-    @Value("${hf.api.key}")
-    private String hfToken;
+    @Value("${pollinations.api.key:}")
+    private String apiKey;
 
     @Value("${llm.appearance.prompt}")
     private String appearancePrompt;
 
     public byte[] generateAlinaImage(String promptContext) {
         try {
-            String url = "https://router.huggingface.co/hf-inference/models/black-forest-labs/FLUX.1-schnell";
             String fullPrompt = appearancePrompt + ", " + promptContext;
 
-            Map<String, String> body = Map.of("inputs", fullPrompt);
+            URI uri = UriComponentsBuilder.fromHttpUrl("https://gen.pollinations.ai/image/{prompt}")
+                    .queryParam("model", "flux")
+                    .queryParam("width", 1024)
+                    .queryParam("height", 1024)
+                    .queryParam("nologo", "true")
+                    .buildAndExpand(fullPrompt)
+                    .toUri();
 
             HttpHeaders headers = new HttpHeaders();
-            headers.set("Authorization", "Bearer " + hfToken);
-            headers.set("Content-Type", "application/json");
-            headers.setAccept(Collections.singletonList(MediaType.valueOf("image/png")));
+            if (apiKey != null && !apiKey.trim().isEmpty()) {
+                headers.set("Authorization", "Bearer " + apiKey);
+            }
 
-            HttpEntity<Map<String, String>> entity = new HttpEntity<>(body, headers);
+            HttpEntity<Void> entity = new HttpEntity<>(headers);
 
-            log.info("requesting hugging face with correct accept headers...");
-            ResponseEntity<byte[]> response = restTemplate.postForEntity(url, entity, byte[].class);
+            log.info("requesting pollinations image: {}", uri);
+
+            ResponseEntity<byte[]> response = restTemplate.exchange(
+                    uri,
+                    HttpMethod.GET,
+                    entity,
+                    byte[].class
+            );
 
             if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
-                log.info("got the photo, size: {} bytes", response.getBody().length);
+                log.info("received image, size: {} bytes", response.getBody().length);
                 return response.getBody();
             }
             return null;
         } catch (Exception e) {
-            log.error("hugging face is being difficult again", e);
+            log.error("failed to generate image: {}", e.getMessage());
             return null;
         }
     }

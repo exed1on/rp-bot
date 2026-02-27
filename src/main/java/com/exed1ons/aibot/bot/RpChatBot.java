@@ -50,6 +50,13 @@ public class RpChatBot extends TelegramLongPollingBot {
             var message = update.getMessage();
             var chatId = message.getChatId().toString();
 
+            var messageUnixTime = message.getDate().longValue();
+            var currentUnixTime = System.currentTimeMillis() / 1000;
+            if (currentUnixTime - messageUnixTime > 60) {
+                logger.info("ignoring ancient drama: {}", message.getText());
+                return;
+            }
+
             if (message.hasText()) {
                 if (message.getText().startsWith("/")) {
                     handleCommand(message, chatId);
