@@ -17,6 +17,8 @@ import org.springframework.web.client.RestTemplate;
 
 import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 @Service
 @RequiredArgsConstructor
@@ -34,7 +36,6 @@ public class RpBotService {
     private String model;
     @Value("#{'${llm.api.keys}'.split(',')}")
     private List<String> apiKeys;
-
     @Value("${llm.system.prompt}")
     private String systemPrompt;
     @Value("${llm.tool.definition}")
@@ -98,19 +99,20 @@ public class RpBotService {
                 if (message.get("tool_calls") != null) {
                     JsonNode toolCalls = objectMapper.valueToTree(message.get("tool_calls"));
                     JsonNode args = objectMapper.readTree(toolCalls.get(0).get("function").get("arguments").asText());
-
-                    String formattedPrompt = String.format(imagePromptTemplate,
-                            args.path("perspective").asText("candid shot"),
-                            args.path("subject_description").asText("staring"),
-                            args.path("clothing").asText("casual"),
-                            args.path("location").asText("room"),
-                            args.path("vibe_and_emotion").asText("dark shadows"));
-
-                    img = imageService.generateAlinaImage(formattedPrompt);
+                    img = imageService.generateAlinaImage(formatPrompt(args));
+                }
+                else if (responseText != null && (responseText.contains("generate_alina_photo") || responseText.contains("<tool"))) {
+                    Pattern pattern = Pattern.compile("\\{.*\\}");
+                    Matcher matcher = pattern.matcher(responseText);
+                    if (matcher.find()) {
+                        JsonNode args = objectMapper.readTree(matcher.group());
+                        img = imageService.generateAlinaImage(formatPrompt(args));
+                        responseText = responseText.replaceAll("\\{.*\\}", "").replaceAll("<.*?>", "").trim();
+                    }
                 }
 
                 if (img != null && (responseText == null || responseText.isBlank())) {
-                    responseText = "just stares at the camera... )))";
+                    responseText = "";
                 }
 
                 Map<String, Object> result = new HashMap<>();
@@ -124,25 +126,26 @@ public class RpBotService {
 
             } catch (Exception e) {
                 log.error("provider error: {}", e.getMessage());
-                if (e.getMessage() != null && (e.getMessage().contains("429") || e.getMessage().contains("401") || e.getMessage().contains("400"))) {
-                    index.set((index.get() + 1) % keys.size());
-                    attempts++;
-                } else {
-                    break;
-                }
+                index.set((index.get() + 1) % keys.size());
+                attempts++;
             }
         }
         return null;
     }
 
+    private String formatPrompt(JsonNode args) {
+        return String.format(imagePromptTemplate,
+                args.path("perspective").asText(""),
+                args.path("subject_description").asText(""),
+                args.path("clothing").asText(""),
+                args.path("location").asText(""),
+                args.path("vibe_and_emotion").asText(""));
+    }
+
     private void saveMessageToHistory(String chatId, String role, String senderName, String content) {
         try {
             chatMessageRepository.save(ChatMessage.builder()
-                    .chatId(chatId)
-                    .role(role)
-                    .senderName(senderName)
-                    .content(content)
-                    .build());
+                    .chatId(chatId).role(role).senderName(senderName).content(content).build());
         } catch (Exception e) {
             log.error("fail history", e);
         }

@@ -13,7 +13,7 @@ public class AppConfig {
     public RestTemplate restTemplate() {
         var factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(30000);
-        factory.setReadTimeout(30000);
+        factory.setReadTimeout(120000);
 
         var restTemplate = new RestTemplate(factory);
         restTemplate.getMessageConverters().add(new ByteArrayHttpMessageConverter());
