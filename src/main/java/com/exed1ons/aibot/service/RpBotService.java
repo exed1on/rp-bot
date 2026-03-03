@@ -68,7 +68,7 @@ public class RpBotService {
                 List<Map<String, Object>> messages = new ArrayList<>();
                 messages.add(Map.of("role", "system", "content", systemPrompt));
 
-                var history = chatMessageRepository.findLastMessages(chatId, PageRequest.of(0, 10));
+                var history = chatMessageRepository.findLastMessages(chatId, PageRequest.of(0, 15));
                 var list = new ArrayList<>(history);
                 Collections.reverse(list);
                 for (var msg : list) {
@@ -94,19 +94,21 @@ public class RpBotService {
                 Map choice = ((List<Map>) response.getBody().get("choices")).get(0);
                 Map message = (Map) choice.get("message");
                 String responseText = (String) message.get("content");
+                String visualContext = null;
                 byte[] img = null;
 
                 if (message.get("tool_calls") != null) {
                     JsonNode toolCalls = objectMapper.valueToTree(message.get("tool_calls"));
                     JsonNode args = objectMapper.readTree(toolCalls.get(0).get("function").get("arguments").asText());
-                    img = imageService.generateAlinaImage(formatPrompt(args));
-                }
-                else if (responseText != null && (responseText.contains("generate_alina_photo") || responseText.contains("<tool"))) {
+                    visualContext = formatPrompt(args);
+                    img = imageService.generateAlinaImage(visualContext);
+                } else if (responseText != null && (responseText.contains("generate_alina_photo") || responseText.contains("<tool"))) {
                     Pattern pattern = Pattern.compile("\\{.*\\}");
                     Matcher matcher = pattern.matcher(responseText);
                     if (matcher.find()) {
                         JsonNode args = objectMapper.readTree(matcher.group());
-                        img = imageService.generateAlinaImage(formatPrompt(args));
+                        visualContext = formatPrompt(args);
+                        img = imageService.generateAlinaImage(visualContext);
                         responseText = responseText.replaceAll("\\{.*\\}", "").replaceAll("<.*?>", "").trim();
                     }
                 }
@@ -115,12 +117,17 @@ public class RpBotService {
                     responseText = "";
                 }
 
+                String historyContent = responseText == null ? "..." : responseText;
+                if (img != null) {
+                    historyContent = String.format("[sent photo: %s] %s", visualContext, historyContent).trim();
+                }
+
                 Map<String, Object> result = new HashMap<>();
                 result.put("text", responseText == null ? "..." : responseText);
                 result.put("image", img);
 
                 saveMessageToHistory(chatId, "user", userName, text);
-                saveMessageToHistory(chatId, "assistant", "Alina", (String) result.get("text"));
+                saveMessageToHistory(chatId, "assistant", "Alina", historyContent);
 
                 return result;
 
@@ -139,7 +146,7 @@ public class RpBotService {
                 args.path("subject_description").asText(""),
                 args.path("clothing").asText(""),
                 args.path("location").asText(""),
-                args.path("vibe_and_emotion").asText(""));
+                args.path("vibe_and_emotion").asText("")).replaceAll("\\s+", " ").trim();
     }
 
     private void saveMessageToHistory(String chatId, String role, String senderName, String content) {

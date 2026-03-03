@@ -35,6 +35,7 @@ public class ImageService {
                     .queryParam("width", 1024)
                     .queryParam("height", 1024)
                     .queryParam("nologo", "true")
+                    .queryParam("safe", "false")
                     .buildAndExpand(fullPrompt)
                     .toUri();
 
