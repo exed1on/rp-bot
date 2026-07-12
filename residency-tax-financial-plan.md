@@ -166,8 +166,11 @@ years** (proposed late 2025, not yet law). If passed, Plan A stretches toward ~1
 
 **Shortcuts to check:**
 - **Polish ancestry** (parent/grandparent, or 2 great-grandparents Polish) → **Karta Polaka
-  → immediate permanent residence → citizenship in ~1 year.** If you have any Polish roots,
-  this changes everything. **Worth checking your family tree.**
+  → immediate permanent residence → citizenship in ~1 year** — OR, even better,
+  **citizenship by descent** (a full EU passport with no residence/language requirement) if the
+  citizenship chain is unbroken. Your **grandmother from Wołyń** is a strong basis for both.
+  **This is the single highest-leverage route** and could collapse the whole 8-year timeline.
+  → See the dedicated deep-dive: **`karta-polaka-and-citizenship-by-descent.md`**.
 - Marriage to a Polish citizen → citizenship after 2 yrs on permanent/LTR permit + 3 yrs married.
 - Presidential grant (*nadanie*) → discretionary, no minimum residence, but unpredictable and unreliable.
 
